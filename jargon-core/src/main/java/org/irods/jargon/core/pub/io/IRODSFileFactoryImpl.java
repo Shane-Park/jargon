@@ -175,11 +175,22 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 	}
 
 	/*
+	 * FIXME: this will be added
+	 */
+	//
+	// public IRODSFileOutputStream instanceCoordinatedIRODSFileOutputStream(final
+	// String path,
+//			final OpenFlags openFlags) {
+//
+//	}
+
+	/*
 	 * (non-Javadoc)
 	 *
 	 * @see
 	 * org.irods.jargon.core.pub.io.IRODSFileFactory#instanceIRODSFileOutputStream
-	 * (org.irods.jargon.core.pub.io.IRODSFile)
+	 * (org.irods.jargon.core.pub.io.IRODSFile) FIXME: what if the replica token is
+	 * already in the irods file?
 	 */
 	@Override
 	public IRODSFileOutputStream instanceIRODSFileOutputStream(final IRODSFile file)
@@ -188,6 +199,8 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 		log.info("instanceIRODSFileOutputStream()");
 		return this.instanceIRODSFileOutputStream(file, OpenFlags.WRITE);
 	}
+
+	// add instanceIRODSFileOutputStream(IRODSFile, replicaToken);
 
 	/*
 	 * (non-Javadoc)
@@ -217,6 +230,32 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 		FileIOOperations fileIOOperations = new FileIOOperationsAOImpl(getIRODSSession(), getIRODSAccount());
 		try {
 			return new IRODSFileOutputStream(file, fileIOOperations, openFlags);
+		} catch (FileNotFoundException e) {
+			log.error("FileNotFound creating output stream", e);
+			throw new JargonException(e);
+		}
+	}
+
+	@Override
+	public IRODSFileOutputStream instanceIRODSFileOutputStream(final IRODSFile file, final OpenFlags openFlags,
+			final boolean coordinated) throws NoResourceDefinedException, JargonException {
+
+		log.info("instanceIRODSFileOutputStream()");
+
+		if (file == null) {
+			throw new IllegalArgumentException("null file");
+		}
+
+		if (openFlags == null) {
+			throw new IllegalArgumentException("null openFlags");
+		}
+
+		log.info("file:{}", file);
+		log.info("openFlags:{}", openFlags);
+
+		FileIOOperations fileIOOperations = new FileIOOperationsAOImpl(getIRODSSession(), getIRODSAccount());
+		try {
+			return new IRODSFileOutputStream(file, fileIOOperations, openFlags, coordinated);
 		} catch (FileNotFoundException e) {
 			log.error("FileNotFound creating output stream", e);
 			throw new JargonException(e);
@@ -299,20 +338,8 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 			throw new IllegalArgumentException("null irodsFile");
 		}
 
-		FileIOOperations fileIOOperations = new FileIOOperationsAOImpl(getIRODSSession(), getIRODSAccount());
 		try {
-			if (!file.exists()) {
-				log.info("file does not exist, creating a new file");
-				file.createNewFileCheckNoResourceFound(OpenFlags.READ_WRITE);
-			}
-
-			/*
-			 * else if (!file.canWrite()) {
-			 * log.info("this file is not writeable by the current user {}",
-			 * file.getAbsolutePath()); throw new JargonException("file is not writeable:" +
-			 * file.getAbsolutePath()); }
-			 */
-
+			FileIOOperations fileIOOperations = new FileIOOperationsAOImpl(getIRODSSession(), getIRODSAccount());
 			return new SessionClosingIRODSFileOutputStream(file, fileIOOperations);
 		} catch (FileNotFoundException e) {
 			log.error("FileNotFound creating output stream", e);
@@ -335,6 +362,9 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 
 		return instanceIRODSFileOutputStream(name, OpenFlags.WRITE);
 	}
+
+	// FIXME: instanceIRODSFileOutputStream(final String name, final String
+	// replicaToken)
 
 	@Override
 	public IRODSFileOutputStream instanceIRODSFileOutputStream(final String name, final OpenFlags openFlags)
@@ -385,7 +415,7 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 				log.info("creating IRODSFileWriter for:" + name);
 			}
 			IRODSFile irodsFile = instanceIRODSFile(name);
-			irodsFile.createNewFileCheckNoResourceFound(OpenFlags.READ_WRITE);
+			// irodsFile.createNewFileCheckNoResourceFound(OpenFlags.READ_WRITE);
 			return new IRODSFileWriter(irodsFile, this);
 		} catch (FileNotFoundException e) {
 			log.error("FileNotFound creating FileWriter", e);
@@ -660,8 +690,45 @@ public final class IRODSFileFactoryImpl extends IRODSGenericAO implements IRODSF
 		}
 
 		// open the file if it is not opened
-		irodsFile.open();
+		irodsFile.open(); // FIXME: add coordinated flag
 		return new IRODSRandomAccessFile(irodsFile, fileIOOperations);
+	}
+
+	@Override
+	public IRODSRandomAccessFile instanceIRODSRandomAccessFile(IRODSFile irodsFile, OpenFlags openFlags,
+			boolean coordinated) throws NoResourceDefinedException, JargonException {
+		FileIOOperations fileIOOperations = new FileIOOperationsAOImpl(getIRODSSession(), getIRODSAccount());
+		log.info("opening IRODSFileImpl for: {}", irodsFile.getAbsoluteFile());
+
+		/*
+		 * if (!irodsFile.exists()) {
+		 * log.info("requested file does not exist, will be created");
+		 * 
+		 * irodsFile.createNewFileCheckNoResourceFound(OpenFlags.READ_WRITE); }
+		 */
+
+		// open the file if it is not opened
+		irodsFile.open(openFlags, coordinated);
+		return new IRODSRandomAccessFile(irodsFile, fileIOOperations);
+	}
+
+	@Override
+	public IRODSRandomAccessFile instanceIRODSRandomAccessFile(String irodsAbsolutePath, OpenFlags openFlags,
+			boolean coordinated) throws NoResourceDefinedException, JargonException {
+
+		log.info("instanceIRODSRandomAccessFile()");
+
+		if (irodsAbsolutePath == null || irodsAbsolutePath.isEmpty()) {
+			throw new IllegalArgumentException("null or empty irodsAbsolutePath");
+		}
+
+		if (openFlags == null) {
+			throw new IllegalArgumentException("null openFlags");
+		}
+
+		IRODSFile pathFile = this.instanceIRODSFile(irodsAbsolutePath);
+		return this.instanceIRODSRandomAccessFile(pathFile, openFlags, coordinated);
+
 	}
 
 }

@@ -13,7 +13,11 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.Lock;
 
+import org.irods.jargon.core.apiplugin.ApiPluginConstants;
+import org.irods.jargon.core.connection.IRODSSession;
+import org.irods.jargon.core.connection.ReplicaTokenCacheManager;
 import org.irods.jargon.core.exception.CatNoAccessException;
 import org.irods.jargon.core.exception.DataNotFoundException;
 import org.irods.jargon.core.exception.DuplicateDataException;
@@ -25,12 +29,16 @@ import org.irods.jargon.core.exception.NoResourceDefinedException;
 import org.irods.jargon.core.exception.ResourceHierarchyException;
 import org.irods.jargon.core.packinstr.DataObjInp;
 import org.irods.jargon.core.packinstr.DataObjInp.OpenFlags;
+import org.irods.jargon.core.pub.ApiPluginExecutor;
 import org.irods.jargon.core.pub.IRODSFileSystemAO;
 import org.irods.jargon.core.pub.domain.ObjStat;
+import org.irods.jargon.core.pub.domain.pluggable.ReplicaClose;
 import org.irods.jargon.core.query.CollectionAndDataObjectListingEntry.ObjectType;
 import org.irods.jargon.core.utils.MiscIRODSUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 /**
  * Describes a file or collection on the IRODS data grid. Note that
@@ -58,6 +66,8 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	private int fileDescriptor = -1;
 	private List<String> directory = new ArrayList<String>();
 	private OpenFlags openFlags = null;
+	private String replicaToken = null;
+	private boolean coordinated = false;
 
 	private static final long serialVersionUID = -6986662136294659059L;
 
@@ -299,7 +309,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#canRead()
 	 */
 	@Override
-	public synchronized boolean canRead() {
+	public boolean canRead() {
 		boolean canRead = false;
 
 		try {
@@ -320,7 +330,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#canWrite()
 	 */
 	@Override
-	public synchronized boolean canWrite() {
+	public boolean canWrite() {
 		boolean canWrite = false;
 
 		try {
@@ -341,14 +351,10 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#createNewFile()
 	 */
 	@Override
-	public synchronized boolean createNewFile() throws IOException {
+	public boolean createNewFile() throws IOException {
 		try {
-			fileDescriptor = irodsFileSystemAO.createFile(getAbsolutePath(), DataObjInp.OpenFlags.READ_WRITE, 0600); // FIXME:
-																														// kory
-																														// test
-
+			fileDescriptor = irodsFileSystemAO.createFile(getAbsolutePath(), DataObjInp.OpenFlags.READ_WRITE, 0600);
 			log.debug("file descriptor from new file create: {}", fileDescriptor);
-
 		} catch (JargonFileOrCollAlreadyExistsException e) {
 			return false;
 		} catch (ResourceHierarchyException rhe) {
@@ -362,12 +368,13 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	}
 
 	@Override
-	public synchronized boolean createNewFileCheckNoResourceFound(final OpenFlags openFlags)
+	public boolean createNewFileCheckNoResourceFound(final OpenFlags openFlags)
 			throws NoResourceDefinedException, JargonException {
 		try {
 			fileDescriptor = irodsFileSystemAO.createFile(getAbsolutePath(), openFlags, DataObjInp.DEFAULT_CREATE_MODE);
 
 			log.debug("file descriptor from new file create: {}", fileDescriptor);
+
 		} catch (JargonFileOrCollAlreadyExistsException e) {
 			return false;
 		}
@@ -380,7 +387,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#delete()
 	 */
 	@Override
-	public synchronized boolean delete() {
+	public boolean delete() {
 		boolean successful = true;
 		if (!exists()) {
 			successful = true;
@@ -420,7 +427,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#deleteWithForceOption()
 	 */
 	@Override
-	public synchronized boolean deleteWithForceOption() {
+	public boolean deleteWithForceOption() {
 		boolean successful = true;
 		try {
 			if (isFile()) {
@@ -474,7 +481,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#exists()
 	 */
 	@Override
-	public synchronized boolean exists() {
+	public boolean exists() {
 
 		boolean isExists = false;
 
@@ -673,7 +680,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#isDirectory()
 	 */
 	@Override
-	public synchronized boolean isDirectory() {
+	public boolean isDirectory() {
 		log.info("isDirectory() for path:{}", getAbsolutePath());
 		boolean isDir = false;
 		try {
@@ -699,7 +706,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#isFile()
 	 */
 	@Override
-	public synchronized boolean isFile() {
+	public boolean isFile() {
 
 		log.info("isFile() for path:{}", getAbsolutePath());
 		boolean isFile = false;
@@ -752,7 +759,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#lastModified()
 	 */
 	@Override
-	public synchronized long lastModified() {
+	public long lastModified() {
 		log.info("lastModified() for path:{}", getAbsolutePath());
 		long lastMod = 0L;
 		try {
@@ -774,7 +781,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#length()
 	 */
 	@Override
-	public synchronized long length() {
+	public long length() {
 
 		log.info("length() for path:{}", getAbsolutePath());
 
@@ -800,7 +807,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#list()
 	 */
 	@Override
-	public synchronized String[] list() {
+	public String[] list() {
 		try {
 			List<String> result = irodsFileSystemAO.getListInDir(this);
 			String[] a = new String[result.size()];
@@ -819,7 +826,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#list(java.io.FilenameFilter)
 	 */
 	@Override
-	public synchronized String[] list(final FilenameFilter filter) {
+	public String[] list(final FilenameFilter filter) {
 		return super.list(filter);
 	}
 
@@ -829,7 +836,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#listFiles()
 	 */
 	@Override
-	public synchronized File[] listFiles() {
+	public File[] listFiles() {
 
 		try {
 			List<String> result = irodsFileSystemAO.getListInDir(this);
@@ -859,7 +866,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#listFiles(java.io.FileFilter)
 	 */
 	@Override
-	public synchronized File[] listFiles(final FileFilter filter) {
+	public File[] listFiles(final FileFilter filter) {
 		try {
 			List<File> result = irodsFileSystemAO.getListInDirWithFileFilter(this, filter);
 			File[] resArray = new File[result.size()];
@@ -880,7 +887,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#listFiles(java.io.FilenameFilter)
 	 */
 	@Override
-	public synchronized File[] listFiles(final FilenameFilter filter) {
+	public File[] listFiles(final FilenameFilter filter) {
 		try {
 			List<String> result = irodsFileSystemAO.getListInDirWithFilter(this, filter);
 			IRODSFileImpl[] a = new IRODSFileImpl[result.size()];
@@ -961,7 +968,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#renameTo(java.io.File)
 	 */
 	@Override
-	public synchronized boolean renameTo(final IRODSFile dest) {
+	public boolean renameTo(final IRODSFile dest) {
 		boolean success = false;
 		if (dest == null) {
 			String msg = "dest file is null";
@@ -1127,13 +1134,9 @@ public class IRODSFileImpl extends File implements IRODSFile {
 
 	}
 
-	/*
-	 * (non-Javadoc)
-	 *
-	 * @see org.irods.jargon.core.pub.io.IRODSFile#toString()
-	 */
 	@Override
 	public String toString() {
+
 		StringBuilder s = new StringBuilder();
 		s.append("irods://");
 		s.append(irodsFileSystemAO.getIRODSAccount().getUserName());
@@ -1143,6 +1146,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 		s.append(irodsFileSystemAO.getIRODSAccount().getPort());
 		s.append(getAbsolutePath());
 		return s.toString();
+
 	}
 
 	/*
@@ -1219,7 +1223,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#getFileDescriptor()
 	 */
 	@Override
-	public synchronized int getFileDescriptor() {
+	public int getFileDescriptor() {
 		return fileDescriptor;
 	}
 
@@ -1228,7 +1232,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 *
 	 * @param fileDescriptor {@code int} for the file descriptor
 	 */
-	protected synchronized void setFileDescriptor(final int fileDescriptor) {
+	protected void setFileDescriptor(final int fileDescriptor) {
 		this.fileDescriptor = fileDescriptor;
 	}
 
@@ -1261,7 +1265,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 */
 	@Override
 	@Deprecated
-	public synchronized int openReadOnly() throws JargonException {
+	public int openReadOnly() throws JargonException {
 		log.info("openReadOnly()");
 		return openWithMode(DataObjInp.OpenFlags.READ);
 	}
@@ -1272,7 +1276,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#open()
 	 */
 	@Override
-	public synchronized int open() throws JargonException {
+	public int open() throws JargonException {
 		log.info("open()");
 		return openWithMode(DataObjInp.OpenFlags.READ_WRITE);
 	}
@@ -1285,7 +1289,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * .DataObjInp.OpenFlags)
 	 */
 	@Override
-	public synchronized int open(final OpenFlags openFlags) throws JargonException {
+	public int open(final OpenFlags openFlags) throws JargonException {
 		log.info("open()");
 		if (openFlags == null) {
 			throw new IllegalArgumentException("null openFlags");
@@ -1297,30 +1301,152 @@ public class IRODSFileImpl extends File implements IRODSFile {
 		return openWithMode(openFlags);
 	}
 
-	/*
-	 * (non-Javadoc)
-	 *
-	 * @see org.irods.jargon.core.pub.io.IRODSFile#close()
-	 */
 	@Override
-	public synchronized void close() throws JargonException {
-		if (log.isInfoEnabled()) {
-			log.info("closing irodsFile:{}", getAbsolutePath());
+	public int open(final OpenFlags openFlags, final boolean coordinated) throws JargonException {
+		log.info("open()");
+
+		// FIXME: should I still mess w/replica tokens when a file is opened for read,
+		// etc?
+
+		if (openFlags == null) {
+			throw new IllegalArgumentException("null openFlags");
 		}
 
-		if (getFileDescriptor() <= 0) {
-			log.info("file is not open, silently ignore");
-			setFileDescriptor(-1);
-			return;
+		this.openFlags = openFlags;
+		this.coordinated = coordinated;
+
+		log.info("openFlags:{}", openFlags);
+		log.info("coordinated:{}", coordinated);
+		return openWithMode(openFlags, coordinated);
+	}
+
+	public int openWithMode(OpenFlags openFlags, boolean coordinated) throws JargonException {
+		log.info("openWithMode()");
+
+		log.info("openFlags:{}", openFlags);
+		log.info("coordinated:{}", coordinated);
+
+		/*
+		 * if (getFileDescriptor() > 0) {
+		 * log.info("file is already open, use the given descriptor"); return
+		 * fileDescriptor; }
+		 */
+
+		int fileDescriptor = irodsFileSystemAO.openFile(this, openFlags, coordinated);
+
+		log.debug("opened file with descriptor of:" + fileDescriptor);
+
+		this.fileDescriptor = fileDescriptor;
+		this.openFlags = openFlags;
+		this.coordinated = coordinated;
+
+		return fileDescriptor;
+	}
+
+	@Override
+	public void close(final boolean updateSize, final boolean updateStatus, final boolean computeChecksum,
+			final boolean sendNotifications, final boolean preserveReplicaStateTable) throws JargonException {
+
+		log.info("close() with flags");
+
+		/*
+		 * If I'm calling this on iRODS when it doesn't support replica tokens, then
+		 * usage error
+		 * 
+		 * if we're not holding a resource token we will go to the normal close,
+		 * otherwise we will process with the provided flags. This is a relaxed
+		 * interpretation and we can covert this if it creates unexpected behaviors
+		 * 
+		 */
+
+		if (this.coordinated && !this.getIrodsFileSystemAO().getIRODSServerProperties().isSupportsReplicaTokens()) {
+			log.warn("iRODS does not support replica tokens");
 		}
 
-		if (openFlags == OpenFlags.WRITE || openFlags == OpenFlags.WRITE_FAIL_IF_EXISTS
-				|| openFlags == OpenFlags.WRITE_TRUNCATE) {
-			log.info("closing with putOpr");
-			irodsFileSystemAO.fileClose(getFileDescriptor(), true);
+		// check if I have a replica token, in which case you will do a replica close
+		if (this.getReplicaToken() != null && this.coordinated) {
+			log.info("close with a replica token, see if this is the last close");
+
+			final IRODSFileSystemAO fsys = this.getIrodsFileSystemAO();
+			final ReplicaTokenCacheManager cacheMgr = IRODSSession.replicaTokenCacheManager;
+			final String absPath = this.getAbsolutePath();
+			final String userName = fsys.getIRODSAccount().getUserName();
+
+			Lock replicaLock = null;
+			try {
+				replicaLock = cacheMgr.obtainReplicaTokenLock(absPath, userName);
+
+				ReplicaTokenCacheManager.tryLock(replicaLock,
+						fsys.getJargonProperties().getReplicaTokenLockTimeoutSeconds());
+				
+				ReplicaClose replicaClose = new ReplicaClose();
+				replicaClose.setFd(this.fileDescriptor);
+
+				if (cacheMgr.isFirstStream(absPath, userName)) {
+					// Wait for all sibling streams to close first.
+					//
+					// The first stream is required to update the catalog on close.
+					// This is so that replication issue trigger correctly. See the
+					// following for more details:
+					//
+					//     https://github.com/irods/irods/issues/6142
+					//
+					while (!cacheMgr.isFinalReferenceToReplicaToken(absPath, userName)) {
+						replicaLock.unlock();
+						Thread.yield();
+						ReplicaTokenCacheManager.tryLock(replicaLock,
+								fsys.getJargonProperties().getReplicaTokenLockTimeoutSeconds());
+					}
+
+					log.info("is this is the final replica close?:true");
+
+					replicaClose.setPreserveReplicaStateTable(preserveReplicaStateTable);
+					replicaClose.setSendNotifications(sendNotifications);
+					replicaClose.setUpdateSize(updateSize);
+					replicaClose.setUpdateStatus(updateStatus);
+					replicaClose.setComputeChecksum(computeChecksum);
+				}
+				else {
+					log.info("is this is the final replica close?:false");
+					replicaClose.setPreserveReplicaStateTable(false);
+					replicaClose.setSendNotifications(false);
+					replicaClose.setUpdateSize(false);
+					replicaClose.setUpdateStatus(false);
+					replicaClose.setComputeChecksum(false);
+				}
+
+				try {
+					String replicaCloseString = IRODSSession.objectMapper.writeValueAsString(replicaClose);
+					ApiPluginExecutor apiPluginExecutor = fsys.getIRODSAccessObjectFactory()
+							.getApiPluginExecutor(fsys.getIRODSAccount());
+					apiPluginExecutor.callPluggableApi(ApiPluginConstants.REPLICA_CLOSE_APN, replicaCloseString);
+
+					cacheMgr.removeReplicaToken(absPath, userName);
+				} catch (JsonProcessingException e) {
+					log.error("error writing json", e);
+					throw new JargonException("error writing replica close", e);
+				}
+			} finally {
+				if (replicaLock != null) {
+					replicaLock.unlock();
+				}
+			}
+
+			/*
+			 * determine if this is the final replica from the cache this is only done when
+			 * the file was open in the 'coordinated' mode
+			 */
+
 		} else {
-			irodsFileSystemAO.fileClose(getFileDescriptor(), false);
 
+			if (openFlags == OpenFlags.WRITE || openFlags == OpenFlags.WRITE_FAIL_IF_EXISTS
+					|| openFlags == OpenFlags.WRITE_TRUNCATE) {
+				log.info("closing with putOpr, check if i need to use a replica close (4.2.9+");
+				irodsFileSystemAO.fileClose(getFileDescriptor(), true);
+			} else {
+				irodsFileSystemAO.fileClose(getFileDescriptor(), false);
+
+			}
 		}
 
 		setFileDescriptor(-1);
@@ -1330,10 +1456,22 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	/*
 	 * (non-Javadoc)
 	 *
+	 * @see org.irods.jargon.core.pub.io.IRODSFile#close()
+	 */
+	@Override
+	public void close() throws JargonException {
+
+		this.close(true, true, this.irodsFileSystemAO.getJargonProperties().isComputeChecksumAfterTransfer(), true,
+				false);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 *
 	 * @see org.irods.jargon.core.pub.io.IRODSFile#closeGivenDescriptor(int)
 	 */
 	@Override
-	public synchronized void closeGivenDescriptor(final int fd) throws JargonException {
+	public void closeGivenDescriptor(final int fd) throws JargonException {
 		if (log.isInfoEnabled()) {
 			log.info("closing irodsFile given descriptor:" + fd);
 		}
@@ -1395,7 +1533,7 @@ public class IRODSFileImpl extends File implements IRODSFile {
 	 * @see java.io.File#canExecute()
 	 */
 	@Override
-	public synchronized boolean canExecute() {
+	public boolean canExecute() {
 
 		boolean canExecute = false;
 		try {
@@ -1432,6 +1570,36 @@ public class IRODSFileImpl extends File implements IRODSFile {
 
 	public void setIrodsFileSystemAO(final IRODSFileSystemAO irodsFileSystemAO) {
 		this.irodsFileSystemAO = irodsFileSystemAO;
+	}
+
+	/**
+	 * Get the replica token that may have been obtained when the file was opened.
+	 * This is only present in later versions of iRODS.
+	 * 
+	 * @return {@code String} with the replica token, {code null} indicates that no
+	 *         token exists
+	 */
+	@Override
+	public String getReplicaToken() {
+		return replicaToken;
+	}
+
+	/**
+	 * Set the replica token if one is available (dependent on iRODS version)
+	 * 
+	 * @param replicaToken {@code String} with the replica token value, if available
+	 */
+	@Override
+	public void setReplicaToken(String replicaToken) {
+		this.replicaToken = replicaToken;
+	}
+
+	public boolean isCoordinated() {
+		return coordinated;
+	}
+
+	public void setCoordinated(boolean coordinated) {
+		this.coordinated = coordinated;
 	}
 
 }

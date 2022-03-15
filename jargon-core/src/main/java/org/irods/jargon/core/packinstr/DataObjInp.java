@@ -38,8 +38,8 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 	public static final String LOCAL_PATH = "localPath";
 	public static final String ALL = "all";
 
-	public static final int CREATE = 512;
-	public static final int TRUNCATE = 1024;
+	public static final int CREATE = 64;
+	public static final int TRUNCATE = 512;
 
 	public static final int CREATE_FILE_API_NBR = 601;
 	public static final int DELETE_FILE_API_NBR = 615;
@@ -52,6 +52,14 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 	public static final int CHECKSUM_API_NBR = 629;
 	public static final int GET_HOST_FOR_GET_API_NBR = 694;
 	public static final int GET_HOST_FOR_PUT_API_NBR = 686;
+	/*
+	 * see
+	 * https://github.com/irods/irods/blob/6784fbb26fc703212f02e170d1bb51e799ffc1ac/
+	 * plugins/api/src/replica_open.cpp#L174-L175 this is the new replica open that
+	 * will return a replica access token for post 4.2.8
+	 */
+
+	public static final int REPLICA_OPEN_API_NBR = 20003;
 
 	public static final String DATA_TYPE_GENERIC = "generic";
 	public static final String DATA_TYPE_MSSO = "msso file";
@@ -143,6 +151,14 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 	 * Can be set to {@code null} if no checksum is specified
 	 */
 	private ChecksumValue fileChecksumValue = null;
+	/**
+	 * Holds a replica token when it needs to be passed in an open operation
+	 */
+	private String replicaToken = null;
+	/**
+	 * {@code int} with the replica number to pass in an open operation
+	 */
+	private int replicaNumber = 0;
 
 	/**
 	 * Generic instance creation method with all constructor parameters. In this
@@ -340,6 +356,26 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 	}
 
 	/**
+	 * Instance for open where a replica token will be obtained, this is only for
+	 * iRODS > 4.2.8
+	 * 
+	 * @param fileAbsolutePath {@code String} with the file absolute path
+	 * @param openFlags        {@link OpenFlags}
+	 * @return {@link DataObjInp}
+	 * @throws JargonException {@link JargonException}
+	 */
+	public static DataObjInp instanceForOpenReplicaToken(String fileAbsolutePath, OpenFlags openFlags)
+			throws JargonException {
+		DataObjInp dataObjInp = new DataObjInp(fileAbsolutePath, DEFAULT_CREATE_MODE, openFlags, 0L, 0L, "", null);
+		if (openFlags == OpenFlags.WRITE || openFlags == OpenFlags.WRITE_FAIL_IF_EXISTS
+				|| openFlags == OpenFlags.WRITE_TRUNCATE || openFlags == OpenFlags.READ_WRITE_CREATE_IF_NOT_EXISTS) {
+			dataObjInp.setOperationType(PUT_OPERATION_TYPE);
+		}
+		dataObjInp.setApiNumber(DataObjInp.REPLICA_OPEN_API_NBR);
+		return dataObjInp;
+	}
+
+	/**
 	 * Create an instance of the protocol for a file open operation.
 	 *
 	 * @param fileAbsolutePath {@code String} with the physical path of the file to
@@ -352,9 +388,42 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 			throws JargonException {
 		DataObjInp dataObjInp = new DataObjInp(fileAbsolutePath, DEFAULT_CREATE_MODE, openFlags, 0L, 0L, "", null);
 		if (openFlags == OpenFlags.WRITE || openFlags == OpenFlags.WRITE_FAIL_IF_EXISTS
-				|| openFlags == OpenFlags.WRITE_TRUNCATE) {
+				|| openFlags == OpenFlags.WRITE_TRUNCATE || openFlags == OpenFlags.READ_WRITE_CREATE_IF_NOT_EXISTS) {
 			dataObjInp.setOperationType(PUT_OPERATION_TYPE);
 		}
+		return dataObjInp;
+	}
+
+	/**
+	 * Create an instance of the protocol for a file open operation where a replica
+	 * token was previously obtained and the user wishes to open another file with
+	 * the same token (adds to the open KVPs)
+	 *
+	 * @param fileAbsolutePath {@code String} with the physical path of the file to
+	 *                         open.
+	 * @param openFlags        {@code OpenFlags} enum value.
+	 * @param replicaToken     {@code String} with the replica token already
+	 *                         established in a prior open
+	 * @param replicaNumber    {@code int} with the replica number associated with
+	 *                         the {@code replicaToken}
+	 * @return {@code DataObjInp} containing the necessary packing instruction
+	 * @throws JargonException for iRODS error
+	 */
+	public static final DataObjInp instanceForOpenWithExistingReplicaToken(final String fileAbsolutePath,
+			final OpenFlags openFlags, final String replicaToken, final int replicaNumber) throws JargonException {
+		DataObjInp dataObjInp = new DataObjInp(fileAbsolutePath, DEFAULT_CREATE_MODE, openFlags, 0L, 0L, "", null);
+		if (openFlags == OpenFlags.WRITE || openFlags == OpenFlags.WRITE_FAIL_IF_EXISTS
+				|| openFlags == OpenFlags.WRITE_TRUNCATE || openFlags == OpenFlags.READ_WRITE_CREATE_IF_NOT_EXISTS) {
+			dataObjInp.setOperationType(PUT_OPERATION_TYPE);
+		}
+
+		if (replicaToken == null || replicaToken.isEmpty()) {
+			throw new IllegalArgumentException("null or empty replicaToken");
+		}
+
+		dataObjInp.replicaToken = replicaToken;
+		dataObjInp.replicaNumber = replicaNumber;
+
 		return dataObjInp;
 	}
 
@@ -778,7 +847,8 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 		// instruction.
 		if (getResource().length() > 0) {
 			if (getApiNumber() == DataObjInp.GET_FILE_API_NBR || getApiNumber() == DataObjInp.GET_HOST_FOR_GET_API_NBR
-					|| getApiNumber() == DataObjInp.GET_HOST_FOR_PUT_API_NBR) {
+					|| getApiNumber() == DataObjInp.GET_HOST_FOR_PUT_API_NBR
+					|| getApiNumber() == DataObjInp.REPLICA_OPEN_API_NBR) {
 				kvps.add(KeyValuePair.instance(RESC_NAME, getResource()));
 			} else {
 				kvps.add(KeyValuePair.instance(DEST_RESC_NAME, getResource()));
@@ -787,6 +857,12 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 
 		if (getReplNum().length() > 0) {
 			kvps.add(KeyValuePair.instance(REPL_NUM, getReplNum()));
+		}
+
+		if (replicaToken != null) {
+			kvps.add(KeyValuePair.instance("replicaToken", replicaToken));
+			kvps.add(KeyValuePair.instance("replNum", String.valueOf(replicaNumber)));
+
 		}
 
 		message.addTag(createKeyValueTag(kvps));
@@ -852,7 +928,7 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 			tagOpenFlags = 2;
 			break;
 		case READ_WRITE_CREATE_IF_NOT_EXISTS:
-			tagOpenFlags = 2;
+			tagOpenFlags = 2 | CREATE;
 			break;
 		case READ_WRITE_FAIL_IF_EXISTS:
 			tagOpenFlags = 2;
@@ -968,6 +1044,13 @@ public class DataObjInp extends AbstractIRODSPackingInstruction {
 	 */
 	public void setOperationType(final int operationType) {
 		this.operationType = operationType;
+	}
+
+	/**
+	 * @param resource the resource to target
+	 */
+	public void setResource(final String resource) {
+		this.resource = resource;
 	}
 
 }

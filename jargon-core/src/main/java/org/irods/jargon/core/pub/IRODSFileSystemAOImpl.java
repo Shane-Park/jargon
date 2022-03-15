@@ -9,9 +9,12 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.Lock;
 
 import org.irods.jargon.core.connection.IRODSAccount;
 import org.irods.jargon.core.connection.IRODSSession;
+import org.irods.jargon.core.connection.ReplicaTokenCacheEntry;
+import org.irods.jargon.core.connection.ReplicaTokenCacheManager;
 import org.irods.jargon.core.exception.CatalogAlreadyHasItemByThatNameException;
 import org.irods.jargon.core.exception.DataNotFoundException;
 import org.irods.jargon.core.exception.DuplicateDataException;
@@ -29,6 +32,7 @@ import org.irods.jargon.core.packinstr.Tag;
 import org.irods.jargon.core.protovalues.FilePermissionEnum;
 import org.irods.jargon.core.pub.domain.ObjStat;
 import org.irods.jargon.core.pub.domain.Resource;
+import org.irods.jargon.core.pub.domain.pluggable.DataObjectOpen;
 import org.irods.jargon.core.pub.io.IRODSFile;
 import org.irods.jargon.core.pub.io.IRODSFileSystemAOHelper;
 import org.irods.jargon.core.query.CollectionAndDataObjectListingEntry;
@@ -45,6 +49,8 @@ import org.irods.jargon.core.utils.IRODSConstants;
 import org.irods.jargon.core.utils.MiscIRODSUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 /**
  * This is a backing object for IRODSFileImpl, handling all IRODS interactions.
@@ -76,7 +82,6 @@ public final class IRODSFileSystemAOImpl extends IRODSGenericAO implements IRODS
 		irodsGenQueryExecutor = getIRODSAccessObjectFactory().getIRODSGenQueryExecutor(getIRODSAccount());
 		collectionAndDataObjectListAndSearchAO = getIRODSAccessObjectFactory()
 				.getCollectionAndDataObjectListAndSearchAO(getIRODSAccount());
-
 	}
 
 	/*
@@ -784,6 +789,157 @@ public final class IRODSFileSystemAOImpl extends IRODSGenericAO implements IRODS
 
 	}
 
+	@Override
+	public int openFile(IRODSFile irodsFile, OpenFlags openFlags, boolean coordinated) throws JargonException {
+		log.info("openFile(final IRODSFile irodsFile,final DataObjInp.OpenFlags openFlags)");
+
+		if (irodsFile == null) {
+			throw new JargonException("irodsFile is null");
+		}
+
+		log.info("irodsFile:{}", irodsFile);
+		log.info("openFlags:{}", openFlags);
+		/*
+		 * See if file exists and if so resolve its absolute path in case it's a link
+		 */
+		String absPath = null;
+		try {
+			absPath = resolveAbsolutePathGivenObjStat(getObjStat(irodsFile.getAbsolutePath()));
+		} catch (FileNotFoundException e) {
+			absPath = irodsFile.getAbsolutePath();
+		}
+
+		OpenFlags myOpenFlags = openFlags;
+
+		if (irodsFile.exists()) {
+			log.info("file exists");
+			if (myOpenFlags == OpenFlags.WRITE_FAIL_IF_EXISTS || myOpenFlags == OpenFlags.READ_WRITE_FAIL_IF_EXISTS) {
+				log.error("file exists, open flags indicate failure intended");
+				throw new JargonException(
+						"Attempt to open a file that exists is an error based on the desired openFlags");
+			}
+		} else {
+			/*
+			 * if it doesn't exist and the flags are for a write, go ahead and set to
+			 * create. Not sure if this is a sensible default or confuses things so if you
+			 * are looking here you should open an issue.
+			 */
+			if (myOpenFlags == OpenFlags.READ_WRITE || myOpenFlags == OpenFlags.WRITE
+					|| myOpenFlags == OpenFlags.WRITE_TRUNCATE) {
+				log.info("set openFlags to create if not exists, since file did not exist");
+				myOpenFlags = OpenFlags.READ_WRITE_CREATE_IF_NOT_EXISTS;
+			}
+
+		}
+
+		final IRODSAccount acct = this.getIRODSAccount();
+
+		// Set the target resource if it was provided, else default to targeting
+		// the resource defined in the iRODS account.
+		final String resourceTarget = (irodsFile.getResource() != null && !irodsFile.getResource().isEmpty())
+				? irodsFile.getResource()
+				: acct.getDefaultStorageResource();
+
+		int fileId;
+		if (this.getIRODSServerProperties().isSupportsReplicaTokens() && coordinated) {
+			log.info("open using replica token semantics");
+			/*
+			 * See if there is a cached replica token, I need to get a lock on it at any
+			 * rate
+			 */
+
+			final ReplicaTokenCacheManager cacheMgr = IRODSSession.replicaTokenCacheManager;
+			final String userName = acct.getUserName();
+
+			Lock replicaLock = null;
+			try {
+				replicaLock = cacheMgr.obtainReplicaTokenLock(absPath, userName);
+
+				ReplicaTokenCacheManager.tryLock(replicaLock,
+						this.getJargonProperties().getReplicaTokenLockTimeoutSeconds());
+
+				ReplicaTokenCacheEntry replicaTokenCacheEntry = cacheMgr.getReplicaTokenEntry(absPath, userName);
+
+				if (replicaTokenCacheEntry.getReplicaToken().isEmpty()) {
+					log.debug("need to obtain a replica token");
+					DataObjInp dataObjInp = DataObjInp.instanceForOpenReplicaToken(absPath, myOpenFlags);
+					dataObjInp.setResource(resourceTarget);
+					ApiPluginExecutor apiPluginExecutor = this.getIRODSAccessObjectFactory()
+							.getApiPluginExecutor(getIRODSAccount());
+					PluggableApiCallResult apiResponse = apiPluginExecutor.callPluggableApi(dataObjInp.getApiNumber(),
+							dataObjInp);
+					log.debug("responseJson:{}", apiResponse);
+
+					try {
+						DataObjectOpen dataObjectOpen = IRODSSession.objectMapper.readValue(apiResponse.getJsonResult(),
+								DataObjectOpen.class);
+						log.debug("dataObjectOpen:{}", dataObjectOpen);
+						fileId = apiResponse.getIntInfo();
+						irodsFile.setReplicaToken(dataObjectOpen.getReplicaToken());
+
+						cacheMgr.addReplicaToken(absPath, userName, dataObjectOpen.getReplicaToken(),
+								dataObjectOpen.getReplicaNumber());
+					} catch (JsonProcessingException e) {
+						log.error("error mapping json:{}", apiResponse, e);
+						throw new JargonException("json mapping error", e);
+					}
+				} else {
+					log.debug("replicaToken exists, use for the open");
+					irodsFile.setReplicaToken(replicaTokenCacheEntry.getReplicaToken());
+					int replicaNumber = Integer.parseInt(replicaTokenCacheEntry.getReplicaNumber());
+					DataObjInp dataObjInp = DataObjInp.instanceForOpenWithExistingReplicaToken(absPath, myOpenFlags,
+							replicaTokenCacheEntry.getReplicaToken(), replicaNumber);
+
+					if (log.isInfoEnabled()) {
+						log.info("opening file:" + absPath);
+					}
+
+					Tag response = getIRODSProtocol().irodsFunction(IRODSConstants.RODS_API_REQ,
+							dataObjInp.getParsedTags(), DataObjInp.OPEN_FILE_API_NBR);
+
+					if (response == null) {
+						String msg = "null response from IRODS call";
+						log.error(msg);
+						throw new JargonException(msg);
+					}
+
+					replicaTokenCacheEntry.incrementOpenCount();
+
+					// parse out the response
+					fileId = response.getTag(MsgHeader.PI_NAME).getTag(MsgHeader.INT_INFO).getIntValue();
+				}
+			} finally {
+				if (replicaLock != null) {
+					replicaLock.unlock();
+				}
+			}
+
+		} else {
+			DataObjInp dataObjInp = DataObjInp.instanceForOpen(absPath, myOpenFlags);
+			dataObjInp.setResource(resourceTarget);
+
+			if (log.isInfoEnabled()) {
+				log.info("opening file:" + absPath);
+			}
+
+			Tag response = getIRODSProtocol().irodsFunction(IRODSConstants.RODS_API_REQ, dataObjInp.getParsedTags(),
+					DataObjInp.OPEN_FILE_API_NBR);
+
+			if (response == null) {
+				String msg = "null response from IRODS call";
+				log.error(msg);
+				throw new JargonException(msg);
+			}
+
+			// parse out the response
+			fileId = response.getTag(MsgHeader.PI_NAME).getTag(MsgHeader.INT_INFO).getIntValue();
+		}
+
+		log.debug("file id for opened file:{}", fileId);
+
+		return fileId;
+	}
+
 	/*
 	 * (non-Javadoc)
 	 *
@@ -793,35 +949,7 @@ public final class IRODSFileSystemAOImpl extends IRODSGenericAO implements IRODS
 	@Override
 	public int openFile(final IRODSFile irodsFile, final DataObjInp.OpenFlags openFlags) throws JargonException {
 
-		log.info("openFile(final IRODSFile irodsFile,final DataObjInp.OpenFlags openFlags)");
-
-		if (irodsFile == null) {
-			throw new JargonException("irodsFile is null");
-		}
-
-		String absPath = resolveAbsolutePathGivenObjStat(getObjStat(irodsFile.getAbsolutePath()));
-
-		DataObjInp dataObjInp = DataObjInp.instanceForOpen(absPath, openFlags);
-
-		if (log.isInfoEnabled()) {
-			log.info("opening file:" + absPath);
-		}
-
-		Tag response = getIRODSProtocol().irodsFunction(IRODSConstants.RODS_API_REQ, dataObjInp.getParsedTags(),
-				DataObjInp.OPEN_FILE_API_NBR);
-
-		if (response == null) {
-			String msg = "null response from IRODS call";
-			log.error(msg);
-			throw new JargonException(msg);
-		}
-
-		// parse out the response
-		int fileId = response.getTag(MsgHeader.PI_NAME).getTag(MsgHeader.INT_INFO).getIntValue();
-
-		log.debug("file id for opened file:{}", fileId);
-
-		return fileId;
+		return openFile(irodsFile, openFlags, false);
 	}
 
 	/*
@@ -931,7 +1059,8 @@ public final class IRODSFileSystemAOImpl extends IRODSGenericAO implements IRODS
 		log.info("fileClose(final int fileDescriptor) :{}", fileDescriptor);
 
 		if (fileDescriptor <= 0) {
-			throw new JargonException("attempting to close file with no valid descriptor");
+			log.warn("attempting to close file with no valid descriptor, will silently ignore");
+			return;
 		}
 		OpenedDataObjInp openedDataObjInp = null;
 		if (putOpr) {

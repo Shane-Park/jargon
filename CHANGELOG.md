@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## UNRELEASED
+
+### Added
+
+### Changed
+
+#### First coordinated stream is required to close and update the catalog when doing parallel transfer #408
+
+Support for 'first stream closed last' semantics for NFSRods handling
+
+### Removed
+
+## [4.3.2.5-RELEASE]
+
+#### First coordinated stream is required to close and update the catalog when doing parallel transfer #408
+
+Adjustments to close behavior for NFSRods in parallel transfer to close first stream last
+
+## [4.3.2.4-RELEASE]
 
 ### Added
 
@@ -93,3 +112,19 @@ Added unit test to verify IRODSFile and DataObject dates agree as part of explai
 ####  Temporarily calm unit tests for tickets until resolved  #376
 
 Temporarily turned off certain ticket unit tests that are failing for follow up in a maintenance release
+
+#### fixed StringIndexOutOfBoundsException and allowed quota values to be 0 #395
+
+A pull request from Shane-Park to address string out of bounds exceptions
+
+#### Errors in ticket modification when date is set to 'none' or blank #401
+
+This appears to be a new error in iRODS, setting an expires date from a non-blank value to a blank value. The unit test failures have been quieted for this release and a follow up will be done with iRODS developers to discern whether this is a server regression.
+
+#### Add condinput to ticket api calls #400
+
+This is a partial fix for changes to the ticket admin API. A CondInput set of key/values pairs was added to the packing
+instruction. A backwards compatable patch was made that supplies this for iRODS post 4.2.11. A follow on task will
+expose the new admin ticket functions in the API.
+
+

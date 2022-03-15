@@ -103,6 +103,22 @@ public class IRODSServerProperties {
 	}
 
 	/**
+	 * Is this server after 4.2.11, when cond input was added to the ticket admin
+	 * packing instruction?
+	 * 
+	 * @return {@code true} if server requires cond input in the ticket admin
+	 *         packing instruction
+	 */
+	public boolean isTicketAdminCondInput() {
+		boolean supports = false;
+
+		if (isTheIrodsServerAtLeastAtTheGivenReleaseVersion("rods4.2.11")) {
+			supports = true;
+		}
+		return supports;
+	}
+
+	/**
 	 * Does the server (based on version) support composable resources
 	 *
 	 * @return <code>boolean</code> indicating whether composable resources are
@@ -112,6 +128,20 @@ public class IRODSServerProperties {
 		boolean supports = false;
 
 		if (isTheIrodsServerAtLeastAtTheGivenReleaseVersion("rods4.0")) {
+			supports = true;
+		}
+		return supports;
+	}
+
+	/**
+	 * Indicates whether the iRODS server supports replica tokens and locking
+	 * 
+	 * @return {@code boolean} if replica tokens and locking are supported
+	 */
+	public boolean isSupportsReplicaTokens() {
+		boolean supports = false;
+
+		if (isTheIrodsServerAtLeastAtTheGivenReleaseVersion("rods4.2.8")) {
 			supports = true;
 		}
 		return supports;
@@ -165,9 +195,8 @@ public class IRODSServerProperties {
 	 * will indicate that the iRODS version being connected to is at or above the
 	 * given version.
 	 *
-	 * @param releaseVersion
-	 *            {@code String} in standard iRODS version format that will be
-	 *            checked against the currently-connected server.
+	 * @param releaseVersion {@code String} in standard iRODS version format that
+	 *                       will be checked against the currently-connected server.
 	 * @return {@code boolean} that will be {@code true} if the iRODS server is at
 	 *         or above the {@code releaseVersion}
 	 */

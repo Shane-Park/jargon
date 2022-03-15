@@ -45,6 +45,8 @@ import org.irods.jargon.core.utils.MiscIRODSUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 /**
  * Utility to open and maintain connections to iRODS across services. This is
  * used internally to keep connections to iRODS on a per-thread basis. A
@@ -74,6 +76,36 @@ import org.slf4j.LoggerFactory;
  *
  */
 public class IRODSSession {
+
+	// TODO: add private concurrent hashmap
+	// concurrenthashmap<abspath, atomic counter>
+	// on any open oper add or ref by abspath and incr ctr
+	/*
+	 * in IRODSFile.close() { if jargonprops says do file close stuff { boolean
+	 * isfinal = dedrementOpenCounter(path) if isfinal { closewithalltheflags(update
+	 * catalog = true) else { closewithinterem flags stuff } } }
+	 * 
+	 * boolean sychnronized removeOpenFile(abspath) { decrement IRODSSession hashmap
+	 * counter, remove if at zero
+	 * 
+	 * synchronized addOpenFile(path) { add to hashmap if exists or create new entry
+	 * }
+	 * 
+	 * 
+	 * 
+	 */
+
+	/**
+	 * Shared {@link ObjectMapper} for general use in JSON processing. This can be
+	 * treated as thread safe.
+	 */
+	public static final ObjectMapper objectMapper = new ObjectMapper();
+
+	/**
+	 * Shared {@link ReplicaTokenCacheManager} that can be used to manage replica
+	 * tokens for opened files
+	 */
+	public static final ReplicaTokenCacheManager replicaTokenCacheManager = new ReplicaTokenCacheManager();
 
 	/**
 	 * {@code ThreadLocal} to cache connections to iRODS. This is a {@code Map} that

@@ -7,7 +7,6 @@ import java.io.OutputStream;
 import org.irods.jargon.core.exception.JargonException;
 import org.irods.jargon.core.exception.JargonRuntimeException;
 import org.irods.jargon.core.exception.NoResourceDefinedException;
-import org.irods.jargon.core.packinstr.DataObjInp;
 import org.irods.jargon.core.packinstr.DataObjInp.OpenFlags;
 import org.irods.jargon.core.pub.io.FileIOOperations.SeekWhenceType;
 import org.slf4j.Logger;
@@ -34,17 +33,10 @@ public class IRODSFileOutputStream extends OutputStream {
 	private final FileIOOperations fileIOOperations;
 
 	/**
-	 * This is the default open mode see {@link DataObjInp.OpenFlags} for details.
-	 * New signatures allow other open options.
-	 */
-	private OpenFlags openFlags = OpenFlags.WRITE;
-
-	/**
 	 * @return the fileIOOperations
 	 */
 	protected FileIOOperations getFileIOOperations() {
 		return fileIOOperations;
-
 	}
 
 	/**
@@ -57,22 +49,45 @@ public class IRODSFileOutputStream extends OutputStream {
 	 * or for some other reason cannot be opened for reading then a
 	 * {@code FileNotFoundException} is thrown.
 	 *
-	 * @param irodsFile
-	 *            {@link IRODSFile} that underlies the stream
-	 * @param fileIOOperations
-	 *            {@link FileIOOperations} that handles the iRODS protoco
-	 * @param openFlags
-	 *            {@link OpenFlags} for the stream
-	 * @exception NoResourceDefinedException
-	 *                if no storage resource is defined, and iRODS has not default
-	 *                resource rule
-	 * @exception FileNotFoundException
-	 *                when file is not found in iRODS
-	 * @exception JargonException
-	 *                when other iRODS errors occur
+	 * @param irodsFile        {@link IRODSFile} that underlies the stream
+	 * @param fileIOOperations {@link FileIOOperations} that handles the iRODS
+	 *                         protocol
+	 * @param openFlags        {@link OpenFlags} for the stream
+	 * @exception NoResourceDefinedException if no storage resource is defined, and
+	 *                                       iRODS has not default resource rule
+	 * @exception FileNotFoundException      when file is not found in iRODS
+	 * @exception JargonException            when other iRODS errors occur
 	 */
 	protected IRODSFileOutputStream(final IRODSFile irodsFile, final FileIOOperations fileIOOperations,
 			final OpenFlags openFlags) throws NoResourceDefinedException, FileNotFoundException, JargonException {
+
+		this(irodsFile, fileIOOperations, openFlags, false);
+	}
+
+	/**
+	 * Constuctor that indicates whether a stream is coordinated, in the sense that
+	 * multiple streams opened for the same iRODS path share a replica token, and
+	 * the stream can coordinate the close flags properly for catalog updates,
+	 * checksum calculation
+	 * 
+	 * If the named file does not exist, is a directory rather than a regular file,
+	 * or for some other reason cannot be opened for reading then a
+	 * {@code FileNotFoundException} is thrown.
+	 *
+	 * @param irodsFile        {@link IRODSFile} that underlies the stream
+	 * @param fileIOOperations {@link FileIOOperations} that handles the iRODS
+	 *                         protoco
+	 * @param openFlags        {@link OpenFlags} for the stream
+	 * @boolean coordinated {@code} boolean that indicates whether to coordinate
+	 *          replica tokens
+	 * @exception NoResourceDefinedException if no storage resource is defined, and
+	 *                                       iRODS has not default resource rule
+	 * @exception FileNotFoundException      when file is not found in iRODS
+	 * @exception JargonException            when other iRODS errors occur
+	 */
+	protected IRODSFileOutputStream(final IRODSFile irodsFile, final FileIOOperations fileIOOperations,
+			final OpenFlags openFlags, final boolean coordinated)
+			throws NoResourceDefinedException, FileNotFoundException, JargonException {
 
 		super();
 		checkFileParameter(irodsFile);
@@ -84,45 +99,70 @@ public class IRODSFileOutputStream extends OutputStream {
 			throw new IllegalArgumentException("openFlags is null");
 		}
 
+		this.irodsFile = irodsFile;
+
 		/*
-		 * Exists and other checks done by object calling this constructor
+		 * if coordinated openCoordinated(fileIOOperations, openFlags) else
 		 */
 
-		this.irodsFile = irodsFile;
-		this.openFlags = openFlags;
-		openIRODSFile(fileIOOperations);
+		openWithFlags(fileIOOperations, openFlags, coordinated);
+
 		this.fileIOOperations = fileIOOperations;
 	}
 
-	private int openIRODSFile(final FileIOOperations fileIOOperations)
-			throws NoResourceDefinedException, JargonException {
+	/*
+	 * openCoordinated
+	 * 
+	 * * StreamDeque - responsible for coordination among multiple stream open calls
+	 * -synch open - acquire replica token
+	 * 
+	 * -close
+	 * 
+	 * replicatoken string -deque of open output streams
+	 * 
+	 * 
+	 * IRODS Session coordinatedStreamMap = new ConcurrentHashMap<String,
+	 * StreamDeque>
+	 * 
+	 * - streamDeque contains ref to each output stream
+	 * 
+	 * 
+	 * 
+	 * 
+	 * 
+	 */
+
+	private int openWithFlags(final FileIOOperations fileIOOperations, final OpenFlags openFlags,
+			final boolean coordinated) throws NoResourceDefinedException, JargonException {
 
 		log.info("openIRODSFile()");
 		int fileDescriptor = -1;
 
+		// this.irodsFile.open();
+
 		boolean exists = irodsFile.exists();
 		log.info("exists? {}", exists);
-
-		/*
-		 * Check exists with open flags and throw error or create as needed
-		 */
-
+//
+//		/*
+//		 * Check exists with open flags and throw error or create as needed
+//		 */
+//
 		irodsFile.setOpenFlags(openFlags);
-
+//
 		if (exists) {
+			// this.irodsFile.close();
 			if (openFlags == OpenFlags.WRITE_FAIL_IF_EXISTS || openFlags == OpenFlags.READ_WRITE_FAIL_IF_EXISTS) {
 				log.error("file exists, open flags indicate failure intended");
 				throw new JargonException(
 						"Attempt to open a file that exists is an error based on the desired openFlags");
 			} else {
 				log.info("open file with given flags");
-				irodsFile.open(openFlags);
+				irodsFile.open(openFlags, coordinated);
 			}
 
 		} else {
-			log.info("file does not exist, create it");
-			irodsFile.createNewFileCheckNoResourceFound(openFlags);
-
+			log.info("file does not exist, create it by adjusting open flags");
+			irodsFile.open(OpenFlags.READ_WRITE_CREATE_IF_NOT_EXISTS, coordinated);
 		}
 
 		fileDescriptor = irodsFile.getFileDescriptor();
@@ -156,6 +196,30 @@ public class IRODSFileOutputStream extends OutputStream {
 		}
 	}
 
+	/**
+	 * iRODS-specific close supporting replica tokens
+	 * 
+	 * @param updateSize                {@code boolean} update size in catalog
+	 * @param updateStatus              {@code boolean} update status in catalog
+	 * @param computeChecksum           {@code boolean} compute the checksum
+	 * @param sendNotifications         {@code boolean} send notifications
+	 * @param preserveReplicaStateTable {@code boolean} preserve replica state table
+	 * @throws JargonException {@link JargonException}
+	 */
+	public void close(final boolean updateSize, final boolean updateStatus, final boolean computeChecksum,
+			final boolean sendNotifications, final boolean preserveReplicaStateTable) throws JargonException {
+
+		log.info("close() with flags");
+		log.info("updateSize:{}", updateSize);
+		log.info("updateStatus:{}", updateStatus);
+		log.info("computeChecksum:{}", computeChecksum);
+		log.info("sendNotifications:{}", sendNotifications);
+		log.info("preserveReplicaStateTable:{}", preserveReplicaStateTable);
+
+		irodsFile.close(updateSize, updateStatus, computeChecksum, sendNotifications, preserveReplicaStateTable);
+
+	}
+
 	/*
 	 * (non-Javadoc)
 	 *
@@ -163,20 +227,32 @@ public class IRODSFileOutputStream extends OutputStream {
 	 */
 	@Override
 	public void close() throws IOException {
+		log.info("close()");
 		try {
+
+			log.info("close will use replica close and handle checksum there if needed");
+
 			irodsFile.close();
 
 			/*
-			 * If checksum compute is true, add an iRODS checksum
+			 * Legacy support
+			 * 
+			 * If checksum compute is true, add an iRODS checksum. This is no longer done
+			 * when post 4.2.9 irods, instead this is done using the replica close and the
+			 * checksum flag in the irodsFile.close() operation above
 			 */
 
-			if (getFileIOOperations().getJargonProperties().isComputeAndVerifyChecksumAfterTransfer()
-					|| getFileIOOperations().getJargonProperties().isComputeChecksumAfterTransfer()) {
-				log.info("computing checksum per jargon properties settings");
-
-				getFileIOOperations().computeChecksumOnIrodsFile(irodsFile.getAbsolutePath());
-
+			if (this.irodsFile.getReplicaToken() == null) {
+				if (getFileIOOperations().getJargonProperties().isComputeAndVerifyChecksumAfterTransfer()
+						|| getFileIOOperations().getJargonProperties().isComputeChecksumAfterTransfer()) {
+					log.info("computing checksum per jargon properties settings");
+					getFileIOOperations().computeChecksumOnIrodsFile(irodsFile.getAbsolutePath());
+				}
 			}
+
+			/*
+			 * ...Legacy support
+			 */
 
 		} catch (JargonException e) {
 			String msg = "JargonException caught in constructor, rethrow as IOException";

@@ -75,6 +75,82 @@ public class IRODSFileOutputStreamTest {
 	}
 
 	@Test
+	public final void testOpenAndCloseCoordinated() throws Exception {
+
+		SettableJargonPropertiesMBean jargonProps = new SettableJargonProperties(originalJargonProperties);
+		jargonProps.setComputeChecksumAfterTransfer(true);
+		irodsFileSystem.getIrodsSession().setJargonProperties(jargonProps);
+		String testFileName = "testComputeChecksum.csv";
+
+		String targetIrodsCollection = testingPropertiesHelper
+				.buildIRODSCollectionAbsolutePathFromTestProperties(testingProperties, IRODS_TEST_SUBDIR_PATH);
+
+		IRODSAccount irodsAccount = testingPropertiesHelper.buildIRODSAccountFromTestProperties(testingProperties);
+
+		IRODSAccessObjectFactory accessObjectFactory = irodsFileSystem.getIRODSAccessObjectFactory();
+		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
+
+		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
+		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile,
+				OpenFlags.READ_WRITE, true);
+
+		int writtenInt = 3;
+		irodsFileOutputStream.write(writtenInt);
+
+		// TODO: add a new close method that does not update the catalog, this one can
+		// take all the options
+		// this is kory's suggestion to match the general dstream api
+		// add irodsFileOutputStream.close(updatecat, computechecksum, updatesize)
+
+		// this is the final close() that updates the catalog
+		irodsFileOutputStream.close();
+
+		ObjStat objStat = accessObjectFactory.getDataObjectAO(irodsAccount)
+				.getObjectStatForAbsolutePath(irodsFile.getAbsolutePath());
+
+		Assert.assertFalse("no checksum found", objStat.getChecksum().isEmpty());
+
+	}
+
+	@Test
+	public final void testTwoOpenAndCloseCoordinated() throws Exception {
+
+		SettableJargonPropertiesMBean jargonProps = new SettableJargonProperties(originalJargonProperties);
+		jargonProps.setComputeChecksumAfterTransfer(true);
+		irodsFileSystem.getIrodsSession().setJargonProperties(jargonProps);
+		String testFileName = "testComputeChecksum.csv";
+
+		String targetIrodsCollection = testingPropertiesHelper
+				.buildIRODSCollectionAbsolutePathFromTestProperties(testingProperties, IRODS_TEST_SUBDIR_PATH);
+
+		IRODSAccount irodsAccount = testingPropertiesHelper.buildIRODSAccountFromTestProperties(testingProperties);
+
+		IRODSAccessObjectFactory accessObjectFactory = irodsFileSystem.getIRODSAccessObjectFactory();
+		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
+
+		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
+		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile,
+				OpenFlags.READ_WRITE, true);
+
+		int writtenInt = 3;
+		irodsFileOutputStream.write(writtenInt);
+
+		// TODO: add a new close method that does not update the catalog, this one can
+		// take all the options
+		// this is kory's suggestion to match the general dstream api
+		// add irodsFileOutputStream.close(updatecat, computechecksum, updatesize)
+
+		// this is the final close() that updates the catalog
+		irodsFileOutputStream.close();
+
+		ObjStat objStat = accessObjectFactory.getDataObjectAO(irodsAccount)
+				.getObjectStatForAbsolutePath(irodsFile.getAbsolutePath());
+
+		Assert.assertFalse("no checksum found", objStat.getChecksum().isEmpty());
+
+	}
+
+	@Test
 	public final void testComputeChecksum() throws Exception {
 
 		SettableJargonPropertiesMBean jargonProps = new SettableJargonProperties(originalJargonProperties);
@@ -95,6 +171,45 @@ public class IRODSFileOutputStreamTest {
 
 		int writtenInt = 3;
 		irodsFileOutputStream.write(writtenInt);
+
+		// TODO: add a new close method that does not update the catalog, this one can
+		// take all the options
+		// this is kory's suggestion to match the general dstream api
+		// add irodsFileOutputStream.close(updatecat, computechecksum, updatesize)
+
+		// this is the final close() that updates the catalog
+		irodsFileOutputStream.close();
+
+		ObjStat objStat = accessObjectFactory.getDataObjectAO(irodsAccount)
+				.getObjectStatForAbsolutePath(irodsFile.getAbsolutePath());
+
+		Assert.assertFalse("no checksum found", objStat.getChecksum().isEmpty());
+
+	}
+
+	@Test
+	public final void testComputeChecksumUsingFullParamsOutputStream() throws Exception {
+
+		SettableJargonPropertiesMBean jargonProps = new SettableJargonProperties(originalJargonProperties);
+		jargonProps.setComputeChecksumAfterTransfer(true);
+		irodsFileSystem.getIrodsSession().setJargonProperties(jargonProps);
+		String testFileName = "testComputeChecksum.csv";
+
+		String targetIrodsCollection = testingPropertiesHelper
+				.buildIRODSCollectionAbsolutePathFromTestProperties(testingProperties, IRODS_TEST_SUBDIR_PATH);
+
+		IRODSAccount irodsAccount = testingPropertiesHelper.buildIRODSAccountFromTestProperties(testingProperties);
+
+		IRODSAccessObjectFactory accessObjectFactory = irodsFileSystem.getIRODSAccessObjectFactory();
+		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
+
+		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
+		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile);
+
+		int writtenInt = 3;
+		irodsFileOutputStream.write(writtenInt);
+
+		// this is the final close() that updates the catalog
 		irodsFileOutputStream.close();
 
 		ObjStat objStat = accessObjectFactory.getDataObjectAO(irodsAccount)
@@ -214,7 +329,7 @@ public class IRODSFileOutputStreamTest {
 		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
 
 		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
-		irodsFile.createNewFile();
+		// irodsFile.createNewFile();
 		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile);
 
 		// get a simple byte array
@@ -256,7 +371,6 @@ public class IRODSFileOutputStreamTest {
 		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
 
 		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
-		irodsFile.createNewFile();
 		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile);
 
 		// get a simple byte array
@@ -283,7 +397,6 @@ public class IRODSFileOutputStreamTest {
 		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
 
 		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
-		irodsFile.createNewFile();
 		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile);
 
 		// get a simple byte array
@@ -310,7 +423,6 @@ public class IRODSFileOutputStreamTest {
 		IRODSAccessObjectFactory accessObjectFactory = irodsFileSystem.getIRODSAccessObjectFactory();
 		IRODSFileFactory irodsFileFactory = accessObjectFactory.getIRODSFileFactory(irodsAccount);
 		IRODSFile irodsFile = irodsFileFactory.instanceIRODSFile(targetIrodsCollection + '/' + testFileName);
-		irodsFile.createNewFile();
 		IRODSFileOutputStream irodsFileOutputStream = irodsFileFactory.instanceIRODSFileOutputStream(irodsFile);
 
 		irodsFile.close();
